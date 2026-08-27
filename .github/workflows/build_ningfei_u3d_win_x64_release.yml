@@ -1,4 +1,4 @@
-name: Build ningfei/u3d Win x64 Release Portable
+name:Build ningfei/u3d Win x64 Release Portable
 
 # 重要：
 #  1) 本文件完全符合 GitHub Actions YAML schema。把它放到仓库 .github/workflows/build_ningfei_u3d_win_x64_release.yml push 到 main
