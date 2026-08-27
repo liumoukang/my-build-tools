@@ -1,21 +1,21 @@
 name: Build ningfei/u3d Win x64 Release Portable
 
 # 重要：
-#  1) 本文件完全符合 GitHub Actions YAML schema。把它放到任何仓库的 .github/workflows/ 下 push 到 master/main
-#     （必须是默认分支），在 Actions → 【Build ningfei/u3d Win x64 Release Portable】右上角就会出现【Run workflow】按钮。
+#  1) 本文件完全符合 GitHub Actions YAML schema。把它放到仓库 .github/workflows/build_ningfei_u3d_win_x64_release.yml push 到 main
+#     在 Actions → 【Build ningfei/u3d Win x64 Release Portable】右上角就会出现【Run workflow】按钮。
 #  2) 无需 fork ningfei/u3d — workflow 内部自动从 github.com/ningfei/u3d 拉源码编译。
 #  3) 产出：Artifact 名称 = ningfei-u3d-win-x64-release-portable
 #          含 IDTFConverter_x64/ 目录（IDTFConverter_x64.exe + 4 个 IFX*.dll + 其他依赖 DLL）
 
 on:
   push:
-    branches: [ master, main ]
+    branches: [ main ]
     paths:
       - '.github/workflows/build_ningfei_u3d_win_x64_release.yml'
   pull_request:
-    branches: [ master, main ]
+    branches: [ main ]
   workflow_dispatch:
-    # 【严格 GHA schema】所有 input 必须带 type；default 必须带
+    # 严格 GHA schema：所有 input 必须带 type；default 必须带
     inputs:
       git_ref:
         description: 'ningfei/u3d git ref (branch/tag/SHA)'
@@ -48,14 +48,11 @@ jobs:
     name: Build Win x64 Release Portable
     runs-on: windows-latest
 
-    # 【严格 GHA schema】defaults.run 只能有 shell，不能有 working-directory
     defaults:
       run:
         shell: pwsh
 
     steps:
-
-      # Step 1: 探测并定位 VS 2022 + vcvars64.bat → 把路径写进 GITHUB_ENV（用 .NET utf8NoBOM 写法，避免 BOM）
       - name: Detect MSVC toolchain
         run: |
           $ErrorActionPreference = 'Stop'
@@ -68,12 +65,12 @@ jobs:
           Write-Host "Git    : $((Get-Command git).Source) -- $(git --version)"
           Write-Host "CMake  : $((Get-Command cmake).Source) -- $((cmake --version)[0])"
           Write-Host "Ninja  : $((Get-Command ninja).Source) -- $(ninja --version)"
-          Write-Host "vswhere: $((Get-Command vswhere).Source)"
+          Write-Host "vswhere: $((Get-Command vswhere -ErrorAction SilentlyContinue).Source)"
           $vsPath = & vswhere -latest -products * `
                     -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
                     -property installationPath
           if ([string]::IsNullOrWhiteSpace($vsPath) -or -not (Test-Path -LiteralPath $vsPath)) {
-            throw 'VS 2022 with MSVC x64 tools not found on this runner.'
+            throw 'VS with MSVC x64 tools not found on this runner.'
           }
           $vcvars = Join-Path $vsPath 'VC\Auxiliary\Build\vcvars64.bat'
           if (-not (Test-Path -LiteralPath $vcvars)) {
@@ -85,7 +82,6 @@ jobs:
           Write-GhEnv 'VCVARS_BAT'  $vcvars
           Write-Host 'OK: toolchain detected.'
 
-      # Step 2: 解析 inputs → 构造 SOURCE/BUILD/INSTALL/PACKAGE 路径 → 写 GITHUB_ENV
       - name: Resolve inputs + layout
         run: |
           $ErrorActionPreference = 'Stop'
@@ -123,7 +119,6 @@ jobs:
           IN_U3D_SHARED:  ${{ inputs.u3d_shared }}
           IN_INSTALL_PFX: ${{ inputs.install_prefix }}
 
-      # Step 3: 克隆 ningfei/u3d
       - name: Clone ningfei/u3d
         run: |
           $ErrorActionPreference = 'Stop'
@@ -159,16 +154,10 @@ jobs:
           Write-Host "HEAD (full)  = $shaFull"
           Write-Host "HEAD (short) = $shaShort"
 
-      # 辅助函数 (内嵌)：激活 MSVC x64 工具链
-      #   在需要 MSVC 的 step 开头这样用：
-      #     . $env:GITHUB_WORKSPACE\_activate_msvc.ps1
-      #   方式：调用 vcvars64.bat → cmd 里 set 输出 env → 解析并回注当前 pwsh 的 Process 环境变量。
-
       - name: Activate-MSVC helper + CMake Configure
         run: |
           $ErrorActionPreference = 'Stop'
           $helper = @'
-          # 激活 MSVC x64 工具链（所有后续 step 都在开头 dot-source 本文件即可）
           $ErrorActionPreference = 'Stop'
           if ([string]::IsNullOrWhiteSpace($env:VCVARS_BAT) -or -not (Test-Path -LiteralPath $env:VCVARS_BAT)) {
             throw "VCVARS_BAT not set or not found: $env:VCVARS_BAT"
@@ -189,17 +178,12 @@ jobs:
           $helperPath = Join-Path $env:GITHUB_WORKSPACE '_activate_msvc.ps1'
           [System.IO.File]::WriteAllText($helperPath, $helper, [System.Text.UTF8Encoding]::new($false))
           Write-Host "Wrote helper: $helperPath"
-          # 立刻 dot-source 激活
           . $helperPath
-          # 清理目录
           if (Test-Path -LiteralPath $env:BUILD_DIR)   { Remove-Item -Recurse -Force -LiteralPath $env:BUILD_DIR }
           if (Test-Path -LiteralPath $env:INSTALL_DIR) { Remove-Item -Recurse -Force -LiteralPath $env:INSTALL_DIR }
           New-Item -ItemType Directory -Force -Path $env:BUILD_DIR   | Out-Null
           New-Item -ItemType Directory -Force -Path $env:INSTALL_DIR | Out-Null
-          # CMake Configure
-          #  - BUILD_SHARED_LIBS=ON  -> 产出 IFXCore.dll 等 DLL（非静态 .lib），必选
-          #  - U3D_SHARED=OFF        -> 使用内置 zlib/png/jpeg 源码，不依赖 find_package，便携分发最稳
-          #  - CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL (/MD)  -> 与 VS 默认一致，DLL 场景不会 LNK2005
+
           $cmakeArgs = @(
             '-S', $env:SOURCE_DIR,
             '-B', $env:BUILD_DIR,
@@ -213,7 +197,7 @@ jobs:
           )
           Write-Host "cmake $($cmakeArgs -join ' ')"
           & cmake @cmakeArgs
-          if ($LASTEXITCODE -ne 0) { throw 'CMake Configure failed. See log above (usually missing zlib/png/jpeg when U3D_SHARED=ON; keep U3D_SHARED=OFF).' }
+          if ($LASTEXITCODE -ne 0) { throw 'CMake Configure failed.' }
           Write-Host 'CMake Configure: OK'
 
       - name: Build (Ninja x64 Release)
@@ -236,13 +220,11 @@ jobs:
             [System.IO.File]::WriteAllText($p, $v, [System.Text.UTF8Encoding]::new($false))
           }
           . (Join-Path $env:GITHUB_WORKSPACE '_activate_msvc.ps1')
-          # Install（失败不致命，fallback 从 build 目录复制）
           Write-Host 'cmake --install (Release)'
           cmake --install $env:BUILD_DIR --config Release
           if ($LASTEXITCODE -ne 0) {
             Write-Host 'WARNING: cmake --install returned non-zero. Will fallback to build-dir collection.'
           }
-          # --- 定位产物 ---
           [string]$srcBin = $null
           $candidates = @(
             (Join-Path $env:INSTALL_DIR 'bin'),
@@ -263,7 +245,6 @@ jobs:
           }
           if (-not $srcBin) { throw 'IDTFConverter.exe / IFXCore.dll not found anywhere. Build likely failed.' }
           Write-Host "Final artifact base dir = $srcBin"
-          # --- 建便携包目录 ---
           $pkgRoot = $env:PACKAGE_ROOT
           $pkgBin  = Join-Path $pkgRoot 'IDTFConverter_x64'
           $pkgDev  = Join-Path $pkgRoot 'dev'
@@ -271,7 +252,6 @@ jobs:
           New-Item -ItemType Directory -Force -Path $pkgBin                          | Out-Null
           New-Item -ItemType Directory -Force -Path (Join-Path $pkgDev 'include\u3d') | Out-Null
           New-Item -ItemType Directory -Force -Path (Join-Path $pkgDev 'lib')         | Out-Null
-          # (1) IDTFConverter.exe -> IDTFConverter_x64.exe
           $conv = Get-ChildItem -LiteralPath $srcBin -Recurse -Filter 'IDTFConverter.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $conv) {
             $conv = Get-ChildItem -LiteralPath $env:BUILD_DIR -Recurse -Filter 'IDTFConverter.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -279,7 +259,6 @@ jobs:
           if (-not $conv) { throw 'IDTFConverter.exe not found for packaging.' }
           Copy-Item -LiteralPath $conv.FullName -Destination (Join-Path $pkgBin 'IDTFConverter_x64.exe') -Force
           Write-Host "COPY EXE : $($conv.Name) -> IDTFConverter_x64.exe"
-          # (2) 必需 DLL（4 件套 IFX*）
           $need = @('IFXCore.dll','IFXExporting.dll','IFXImporting.dll','IFXScheduling.dll')
           $copied = 0
           foreach ($name in $need) {
@@ -292,7 +271,6 @@ jobs:
               Write-Host "SKIP    : $name (not produced; may be statically linked into IFXCore when U3D_SHARED=OFF)"
             }
           }
-          # (2b) 其他附加 DLL（zlib1、png、jpeg 等，U3D_SHARED=ON 会产出）
           foreach ($ad in Get-ChildItem -LiteralPath $srcBin -Recurse -Filter '*.dll' -ErrorAction SilentlyContinue) {
             $dst = Join-Path $pkgBin $ad.Name
             if (-not (Test-Path -LiteralPath $dst)) {
@@ -301,7 +279,6 @@ jobs:
             }
           }
           Write-Host "Required IFX*.dll copied = $copied / 4"
-          # (3) 开发头文件 include/u3d/*.h
           $hdrDir = Join-Path $env:INSTALL_DIR 'include\u3d'
           if (-not (Test-Path -LiteralPath $hdrDir)) {
             $dir = Get-ChildItem -LiteralPath $env:SOURCE_DIR -Recurse -Directory -Filter 'u3d' -ErrorAction SilentlyContinue |
@@ -319,7 +296,6 @@ jobs:
           } else {
             Write-Host 'SKIP headers: u3d include dir not located.'
           }
-          # (4) Import libs
           $libN = 0
           foreach ($root in @($env:INSTALL_DIR, $env:BUILD_DIR, $srcBin)) {
             if (-not (Test-Path -LiteralPath $root)) { continue }
@@ -332,7 +308,6 @@ jobs:
             }
           }
           Write-Host "IMPORT LIBS copied = $libN"
-          # (5) README + BUILD_INFO
           $readme = @"
 # ningfei/u3d Windows x64 Release Portable (IDTFConverter_x64)
 
@@ -363,14 +338,13 @@ SOURCE_REPO   = $($env:REPO_URL)
 SOURCE_REF    = $($env:GIT_REF)
 SOURCE_SHA    = $($env:SOURCE_SHA)
 SOURCE_SHORT  = $($env:SOURCE_SHA_SHORT)
-BUILD_CONFIG  = Release x64 (MSVC v143 /MD via Ninja)
+BUILD_CONFIG  = Release x64 (MSVC /MD via Ninja)
 U3D_SHARED    = $($env:U3D_SHARED)
 BUILD_TIME    = $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss K')
 RUNNER        = windows-latest (GitHub Actions)
 WORKFLOW      = $($env:GITHUB_WORKFLOW)
 "@
           Write-Utf8NoBom (Join-Path $pkgRoot 'BUILD_INFO.txt') $info
-          # 最终打印便携包树
           Write-Host ''
           Write-Host '=== PACKAGE TREE ==='
           Get-ChildItem -LiteralPath $pkgRoot -Recurse | ForEach-Object {
@@ -378,12 +352,10 @@ WORKFLOW      = $($env:GITHUB_WORKFLOW)
             $sz  = if ($_.PSIsContainer) { '<DIR>' } else { ("{0,10} bytes" -f $_.Length) }
             Write-Host ("  {0,-60} {1}" -f $rel, $sz)
           }
-          # 最后强制校验：便携包内必须有 IDTFConverter_x64.exe（打包失败立刻红）
           if (-not (Test-Path -LiteralPath (Join-Path $pkgBin 'IDTFConverter_x64.exe'))) {
             throw 'Packaging failed: IDTFConverter_x64.exe missing.'
           }
 
-      # Step N: 上传 Artifact（if-no-files-found: error → 没东西直接把 workflow 标红，不会假成功）
       - name: Upload portable package artifact
         uses: actions/upload-artifact@v4
         with:
