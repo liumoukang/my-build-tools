@@ -1,8 +1,8 @@
-name:Build ningfei/u3d Win x64 Release Portable
+name: Build ningfei/u3d Win x64 Release (Portable)
 
 # 重要：
 #  1) 本文件完全符合 GitHub Actions YAML schema。把它放到仓库 .github/workflows/build_ningfei_u3d_win_x64_release.yml push 到 main
-#     在 Actions → 【Build ningfei/u3d Win x64 Release Portable】右上角就会出现【Run workflow】按钮。
+#     在 Actions → 【Build ningfei/u3d Win x64 Release (Portable)】右上角就会出现【Run workflow】按钮。
 #  2) 无需 fork ningfei/u3d — workflow 内部自动从 github.com/ningfei/u3d 拉源码编译。
 #  3) 产出：Artifact 名称 = ningfei-u3d-win-x64-release-portable
 #          含 IDTFConverter_x64/ 目录（IDTFConverter_x64.exe + 4 个 IFX*.dll + 其他依赖 DLL）
@@ -45,7 +45,7 @@ env:
 
 jobs:
   build-win-x64-portable:
-    name: Build Win x64 Release Portable
+    name: Build Win x64 Release (Portable)
     runs-on: windows-latest
 
     defaults:
@@ -308,7 +308,7 @@ jobs:
             }
           }
           Write-Host "IMPORT LIBS copied = $libN"
-          $readme = @"
+          $readmeText = @'
 # ningfei/u3d Windows x64 Release Portable (IDTFConverter_x64)
 
 Built by GitHub Actions workflow (.github/workflows/build_ningfei_u3d_win_x64_release.yml),
@@ -331,9 +331,9 @@ Built by GitHub Actions workflow (.github/workflows/build_ningfei_u3d_win_x64_re
   2. Open folder: `<3D_PDF_App>\Tools\IDTFConverter_x64\`
   3. Copy ALL files inside this package's IDTFConverter_x64/ directory into that folder, overwrite.
   4. Restart the app. The very first log line should print "IDTFConverter_x64 5件套齐全 = True".
-"@
-          Write-Utf8NoBom (Join-Path $pkgRoot 'README_DEPLOY.txt') $readme
-          $info = @"
+'@
+          Write-Utf8NoBom (Join-Path $pkgRoot 'README_DEPLOY.txt') $readmeText
+          $infoText = @"
 SOURCE_REPO   = $($env:REPO_URL)
 SOURCE_REF    = $($env:GIT_REF)
 SOURCE_SHA    = $($env:SOURCE_SHA)
@@ -344,7 +344,7 @@ BUILD_TIME    = $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss K')
 RUNNER        = windows-latest (GitHub Actions)
 WORKFLOW      = $($env:GITHUB_WORKFLOW)
 "@
-          Write-Utf8NoBom (Join-Path $pkgRoot 'BUILD_INFO.txt') $info
+          Write-Utf8NoBom (Join-Path $pkgRoot 'BUILD_INFO.txt') $infoText
           Write-Host ''
           Write-Host '=== PACKAGE TREE ==='
           Get-ChildItem -LiteralPath $pkgRoot -Recurse | ForEach-Object {
